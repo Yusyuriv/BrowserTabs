@@ -28,7 +28,7 @@ namespace BrowserTabs
             StringComparer.OrdinalIgnoreCase);
 
         /// <summary>
-        /// Retrieves all open tabs from all Chromium-based and Firefox-based browser windows,
+        /// Retrieves open tabs from all Chromium-based and Firefox-based browser windows,
         /// </summary>
         /// <param name="cancellationToken">Token to cancel the operation.</param>
         /// <returns>List of BrowserTab objects representing each open tab.</returns>
@@ -98,7 +98,7 @@ namespace BrowserTabs
         }
 
         /// <summary>
-        /// Retrieves all open tabs from all Chromium-based browser windows,
+        /// Retrieves open tabs from all Chromium-based browser windows,
         /// using a unified logic to avoid duplicate or separate calls.
         /// </summary>
         /// <param name="cancellationToken">Token to cancel the operation.</param>
@@ -159,9 +159,9 @@ namespace BrowserTabs
 
             return new List<BrowserTab>(tabBag);
         }
-        
+
         /// <summary>
-        /// Retrieves all open tabs from all Firefox-based browser windows,
+        /// Retrieves open tabs from all Firefox-based browser windows,
         /// using a unified logic to avoid duplicate or separate calls.
         /// </summary>
         /// <param name="cancellationToken">Token to cancel the operation.</param>
@@ -455,7 +455,7 @@ namespace BrowserTabs
         }
 
         /// <summary>
-        /// Finds all top-level browser windows for the specified process names.
+        /// Finds all top-level browser windows for Chromium and Firefox type browsers.
         /// </summary>
         /// <param name="cancellationToken">Token to cancel the operation.</param>
         /// <returns>List of tuples containing window handle and process ID.</returns>
@@ -578,7 +578,12 @@ namespace BrowserTabs
 
             return new List<(IntPtr, int)>(browserWindows);
         }
-        
+
+        /// <summary>
+        /// Finds all top-level Firefox browser windows on the system.
+        /// </summary>
+        /// <param name="cancellationToken">Token to cancel the operation.</param>
+        /// <returns>List of tuples containing window handle and process ID.</returns>
         private static List<(IntPtr hwnd, int processId)> GetAllFirefoxWindows(CancellationToken cancellationToken)
         {
             var browserWindows = new ConcurrentBag<(IntPtr, int)>();
