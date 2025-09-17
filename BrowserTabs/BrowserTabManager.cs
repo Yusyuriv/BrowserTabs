@@ -316,7 +316,7 @@ namespace BrowserTabs
                     return tabs;
 
                 if (cancellationToken.IsCancellationRequested)
-                    cancellationToken.ThrowIfCancellationRequested();
+                    return new List<BrowserTab>();
 
                 var tabItems = tabElement.FindAll(TreeScope.Children, new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.TabItem));
 
