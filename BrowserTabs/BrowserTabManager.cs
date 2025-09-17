@@ -20,7 +20,7 @@ namespace BrowserTabs
         private const string FirefoxName = "firefox";
 
         private static readonly HashSet<string> ChromiumProcessNames = new(
-            new[] { "msedge", "chrome", "brave", "vivaldi", "opera", "chromium" },
+            new[] { "msedge", "chrome", "brave", "vivaldi", "opera", ChromiumName },
             StringComparer.OrdinalIgnoreCase);
 
         private static readonly HashSet<string> FirefoxProcessNames = new(
