@@ -15,13 +15,87 @@ namespace BrowserTabs
     /// </summary>
     public class BrowserTabManager
     {
+        private const string ChromiumName = "chromium";
+
+        private const string FirefoxName = "firefox";
+
         private static readonly HashSet<string> ChromiumProcessNames = new(
             new[] { "msedge", "chrome", "brave", "vivaldi", "opera", "chromium" },
             StringComparer.OrdinalIgnoreCase);
-        
+
         private static readonly HashSet<string> FirefoxProcessNames = new(
-            new[] { "firefox" },
+            new[] { FirefoxName },
             StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// Retrieves all open tabs from all Chromium-based and Firefox-based browser windows,
+        /// </summary>
+        /// <param name="cancellationToken">Token to cancel the operation.</param>
+        /// <returns>List of BrowserTab objects representing each open tab.</returns>
+        public static List<BrowserTab> GetAllTabs(CancellationToken cancellationToken = default)
+        {
+            var tabBag = new ConcurrentBag<BrowserTab>();
+
+            try
+            {
+                if (cancellationToken.IsCancellationRequested)
+                    return new List<BrowserTab>();
+
+                var browserWindows = GetAllBrowserWindows(cancellationToken);
+
+                if (cancellationToken.IsCancellationRequested)
+                    return new List<BrowserTab>();
+
+                Parallel.ForEach(
+                    browserWindows,
+                    new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount, CancellationToken = cancellationToken },
+                    window =>
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+
+                        try
+                        {
+                            var process = Process.GetProcessById(window.processId);
+                            var mainWindow = AutomationElement.FromHandle(window.hwnd);
+                            if (mainWindow is null)
+                                return;
+
+                            var tabs = new List<BrowserTab>();
+                            if (window.browserTypeName == ChromiumName)
+                            {
+                                tabs = !IsWindowMinimized(window.hwnd)
+                                        ? GetTabsFromWindow(mainWindow, process, cancellationToken)
+                                        : GetTabsFromWindowMinimized(mainWindow, process, window.hwnd, cancellationToken);
+                            }
+                            else if (window.browserTypeName == FirefoxName)
+                            {
+                                tabs = GetFirefoxTabsFromWindow(mainWindow, process, cancellationToken);
+                            }
+
+                            for (int i = 0; i < tabs.Count; i++)
+                            {
+                                cancellationToken.ThrowIfCancellationRequested();
+
+                                tabBag.Add(tabs[i]);
+                            }
+                        }
+                        catch (ArgumentException)
+                        {
+                            // Process might have exited, ignore
+                        }
+                    });
+            }
+            catch (OperationCanceledException)
+            {
+                return new List<BrowserTab>();
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"Error getting Chromium tabs: {ex}");
+            }
+
+            return new List<BrowserTab>(tabBag);
+        }
 
         /// <summary>
         /// Retrieves all open tabs from all Chromium-based browser windows,
@@ -120,7 +194,7 @@ namespace BrowserTabs
                             if (mainWindow is null)
                                 return;
 
-                            var tabs = GetTabsFromWindow(mainWindow, process, cancellationToken);
+                            var tabs = GetFirefoxTabsFromWindow(mainWindow, process, cancellationToken);
 
                             for (int i = 0; i < tabs.Count; i++)
                             {
@@ -163,81 +237,96 @@ namespace BrowserTabs
                 if (cancellationToken.IsCancellationRequested)
                     return new List<BrowserTab>();
 
-                var isFirefox =
-                    string.Equals(process.ProcessName, "firefox", StringComparison.OrdinalIgnoreCase) ||
-                    string.Equals(mainWindow.Current.ClassName, "MozillaWindowClass", StringComparison.Ordinal);
-
-                if (!isFirefox)
-                {
-                    // Chromium: class names work
-                    var tabCondition =
-                        new OrCondition(
+                var tabCondition =
+                    new OrCondition(
                         new PropertyCondition(AutomationElement.ClassNameProperty, "EdgeTab"), // Microsoft Edge
                         new PropertyCondition(AutomationElement.ClassNameProperty, "Tab") // Chrome, Brave, Vivaldi, Opera, Chromium
-                    );
+                );
 
-                    AutomationElementCollection tabElements = mainWindow.FindAll(TreeScope.Descendants, tabCondition);
+                AutomationElementCollection tabElements = mainWindow.FindAll(TreeScope.Descendants, tabCondition);
 
-                    int count = tabElements.Count;
-                    if (count > 0)
+                int count = tabElements.Count;
+                if (count > 0)
+                {
+                    if (cancellationToken.IsCancellationRequested)
+                        return new List<BrowserTab>();
+
+                    // Use partitioner for better parallelism
+                    var rangePartitioner = Partitioner.Create(0, count);
+                    var tabList = new BrowserTab[count];
+
+                    Parallel.ForEach(rangePartitioner, new ParallelOptions { CancellationToken = cancellationToken }, range =>
                     {
-                        if (cancellationToken.IsCancellationRequested)
-                            return new List<BrowserTab>();
+                        cancellationToken.ThrowIfCancellationRequested();
 
-                        // Use partitioner for better parallelism
-                        var rangePartitioner = Partitioner.Create(0, count);
-                        var tabList = new BrowserTab[count];
-
-                        Parallel.ForEach(rangePartitioner, new ParallelOptions { CancellationToken = cancellationToken }, range =>
-                            {
-                                cancellationToken.ThrowIfCancellationRequested();
-
-                                for (int i = range.Item1; i < range.Item2; i++)
-                                {
-                                    cancellationToken.ThrowIfCancellationRequested();
-
-                                    var tabElement = tabElements[i];
-                                    var tab = CreateTabFromElement(tabElement, process, i);
-                                    if (tab != null)
-                                        tabList[i] = tab;
-                                }
-                            });
-
-                        // Add non-null tabs to result
-                        for (int i = 0; i < count; i++)
+                        for (int i = range.Item1; i < range.Item2; i++)
                         {
                             cancellationToken.ThrowIfCancellationRequested();
 
-                            if (tabList[i] != null)
-                                tabs.Add(tabList[i]);
+                            var tabElement = tabElements[i];
+                            var tab = CreateTabFromElement(tabElement, process, i);
+                            if (tab != null)
+                                tabList[i] = tab;
                         }
-                    }
-                }
-                else
-                {
-                    // Firefox: In both horizontal and vertical tabs, Tab element with TabItem elements is always
-                    // the first Tab element, so we can find it and then look through its children.
-                    var tabElement = mainWindow.FindFirst(TreeScope.Descendants,
-                        new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Tab));
+                    });
 
-                    if (tabElement == null)
-                        return tabs;
-
-                    int tabIndex = 0;
-                    
-                    if (cancellationToken.IsCancellationRequested)
-                        cancellationToken.ThrowIfCancellationRequested();
-                    
-                    var tabItems = tabElement.FindAll(TreeScope.Children, new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.TabItem));
-                    
-                    for (int i = 0; i < tabItems.Count; i++)
+                    // Add non-null tabs to result
+                    for (int i = 0; i < count; i++)
                     {
                         cancellationToken.ThrowIfCancellationRequested();
 
-                        var tab = CreateTabFromElement(tabItems[i], process, i);
-                        if (tab != null)
-                            tabs.Add(tab);
+                        if (tabList[i] != null)
+                            tabs.Add(tabList[i]);
                     }
+                }
+            }
+            catch (ElementNotAvailableException ex)
+            {
+                Console.Error.WriteLine($"Element not available: {ex}");
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"Error getting tabs from window: {ex}");
+            }
+
+            return tabs;
+        }
+
+        /// <summary>
+        /// Retrieves all tabs from Firefox browser window.
+        /// </summary>
+        /// <param name="mainWindow">AutomationElement representing the browser window.</param>
+        /// <param name="process">Process object for the browser.</param>
+        /// <param name="cancellationToken">Token to cancel the operation.</param>
+        /// <returns>List of BrowserTab objects found in the window.</returns>
+        private static List<BrowserTab> GetFirefoxTabsFromWindow(AutomationElement mainWindow, Process process, CancellationToken cancellationToken)
+        {
+            var tabs = new List<BrowserTab>();
+            try
+            {
+                if (cancellationToken.IsCancellationRequested)
+                    return new List<BrowserTab>();
+
+                // Firefox: In both horizontal and vertical tabs, Tab element with TabItem elements is always
+                // the first Tab element, so we can find it and then look through its children.
+                var tabElement = mainWindow.FindFirst(TreeScope.Descendants,
+                    new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Tab));
+
+                if (tabElement == null)
+                    return tabs;
+
+                if (cancellationToken.IsCancellationRequested)
+                    cancellationToken.ThrowIfCancellationRequested();
+
+                var tabItems = tabElement.FindAll(TreeScope.Children, new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.TabItem));
+
+                for (int i = 0; i < tabItems.Count; i++)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+
+                    var tab = CreateTabFromElement(tabItems[i], process, i);
+                    if (tab != null)
+                        tabs.Add(tab);
                 }
             }
             catch (ElementNotAvailableException ex)
@@ -363,6 +452,72 @@ namespace BrowserTabs
                 Console.Error.WriteLine($"Error creating tab from element: {ex}");
                 return null;
             }
+        }
+
+        /// <summary>
+        /// Finds all top-level browser windows for the specified process names.
+        /// </summary>
+        /// <param name="cancellationToken">Token to cancel the operation.</param>
+        /// <returns>List of tuples containing window handle and process ID.</returns>
+        private static List<(IntPtr hwnd, int processId, string browserTypeName)> GetAllBrowserWindows(CancellationToken cancellationToken)
+        {
+            var browserWindows = new ConcurrentBag<(IntPtr, int, string)>();
+            var windowHandles = new List<(IntPtr hwnd, uint pid)>();
+
+            if (cancellationToken.IsCancellationRequested)
+                return new List<(IntPtr, int, string)>();
+
+            Task.Run(() =>
+            {
+                NativeMethods.EnumWindows((hwnd, lParam) =>
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+
+                    uint pid;
+                    NativeMethods.GetWindowThreadProcessId(hwnd, out pid);
+                    windowHandles.Add((hwnd, pid));
+
+                    return true;
+
+                }, IntPtr.Zero);
+            }, cancellationToken).Wait(cancellationToken);
+
+            if (cancellationToken.IsCancellationRequested)
+                return new List<(IntPtr, int, string)>();
+
+            Parallel.ForEach(
+                windowHandles,
+                new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount, CancellationToken = cancellationToken },
+                window =>
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+
+                    try
+                    {
+                        var process = Process.GetProcessById((int)window.pid);
+                        if (ChromiumProcessNames.Contains(process.ProcessName) || FirefoxProcessNames.Contains(process.ProcessName))
+                        {
+                            int length = NativeMethods.GetWindowTextLength(window.hwnd);
+                            if (length > 0)
+                            {
+                                if (process.ProcessName == FirefoxName)
+                                {
+                                    browserWindows.Add((window.hwnd, (int)window.pid, FirefoxName));
+                                }
+                                else
+                                {
+                                    browserWindows.Add((window.hwnd, (int)window.pid, ChromiumName));
+                                }
+                            }
+                        }
+                    }
+                    catch (ArgumentException)
+                    {
+                        // Process might have exited, ignore
+                    }
+                });
+
+            return new List<(IntPtr, int, string)>(browserWindows);
         }
 
         /// <summary>
