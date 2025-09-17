@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>Library</OutputType>
@@ -19,8 +19,8 @@
     <CopyRight>Jeremy Wu</CopyRight>
     <RepositoryUrl>https://github.com/jjw24/BrowserTabs</RepositoryUrl>
     <PackageProjectUrl>https://github.com/jjw24/BrowserTabs</PackageProjectUrl>
-    <PackageDescription>Library for retrieving all opened browser tabs in Chromium-based browsers</PackageDescription>
-    <PackageTags>browsertabs; browser; chromium; browser-tabs; tabs</PackageTags>
+    <PackageDescription>Library for retrieving all opened browser tabs in Chromium-based and Firefox-based browsers</PackageDescription>
+    <PackageTags>browsertabs; browser; chromium; browser-tabs; tabs; firefox</PackageTags>
     <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
     <PublishRepositoryUrl>true</PublishRepositoryUrl>
     <TargetFramework>net7.0-windows</TargetFramework>
